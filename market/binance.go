@@ -47,13 +47,14 @@ func (b *BinanceExchange) ProduceAllPrice(errorHandler ErrorHandler) *BinancePro
 }
 
 func (b *BinanceExchange) ProducePrice(symbols []string, errorHandler ErrorHandler) *BinanceProducer {
-	outC := make(chan Price)
+	outC := make(chan Price, 64)
 	tradeEventHandler := func(event *binance.WsAggTradeEvent) {
-		log.Println("Receveived AggTradeEvent")
+
 		price, err := strconv.ParseFloat(event.Price, 64)
 		if err != nil {
 			errorHandler(err)
 		}
+		// log.Println("Receveived AggTradeEvent:", event.Symbol)
 		outC <- Price{
 			Symbol: event.Symbol,
 			Price:  price,

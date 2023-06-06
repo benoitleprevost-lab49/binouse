@@ -26,6 +26,7 @@ func main() {
 
 	// Create a price dispatcher
 	dispatcher := pubsub.NewPriceDispatcher(producer)
+	dispatcher.Start()
 
 	// Create an SSE server
 	server := web.NewSseServer(dispatcher)

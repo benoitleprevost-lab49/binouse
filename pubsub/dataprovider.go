@@ -26,6 +26,16 @@ func (p *PriceDispatcher) Subscribe(symbol string) <-chan market.Price {
 	return p.subscriptions[symbol]
 }
 
+func (p *PriceDispatcher) Unsubscribe(symbol string) bool {
+	if ch, ok := p.subscriptions[symbol]; ok {
+		close(ch)
+		delete(p.subscriptions, symbol)
+		return true
+	} else {
+		return false
+	}
+}
+
 func (p *PriceDispatcher) process(ctx context.Context) {
 	for {
 		select {
@@ -38,7 +48,10 @@ func (p *PriceDispatcher) process(ctx context.Context) {
 			return
 		case price := <-p.priceProducer.Out():
 			if _, ok := p.subscriptions[price.Symbol]; ok {
+				log.Println("Found subscription ", price.Symbol, " for price ", price.Price)
 				p.subscriptions[price.Symbol] <- price
+			} else {
+				log.Println("No subscription found for ", price.Symbol)
 			}
 		}
 	}

@@ -65,6 +65,7 @@ func (s *SseServer) Price(pattern string) {
 				select {
 				case <-timeout:
 					log.Println("Timeout")
+					s.priceDispatcher.Unsubscribe(symbol)
 					return
 				case price := <-prices:
 					byt, _ := json.Marshal(price)
