@@ -19,35 +19,36 @@ func NewBinanceExchange(apiKey, secretKey string) *BinanceExchange {
 }
 
 func (b *BinanceExchange) Symbols() ([]string, error) {
+	start := time.Now()
 	client := binance.NewClient(b.apiKey, b.secretKey)
 	ei, err := client.NewExchangeInfoService().Do(context.Background())
 	if err != nil {
 		return nil, err
 	}
-	symbols := make([]string, 0)
+	symbols := make([]string, 0) // we don't know yet how many symbols we will be tradeable
 	for _, s := range ei.Symbols {
 		if s.IsMarginTradingAllowed && s.IsSpotTradingAllowed {
 			symbols = append(symbols, s.Symbol)
 		}
 
 	}
+
+	elapsed := time.Since(start)
+	log.Println("Found", len(symbols), "Tokens in", elapsed)
+	log.Println("Symbols:", symbols)
 	return symbols, nil
 }
 
 func (b *BinanceExchange) ProduceAllPrice(errorHandler ErrorHandler) *BinanceProducer {
-	start := time.Now()
 	tokens, err := b.Symbols()
 	if err != nil {
 		errorHandler(err)
 	}
-	elapsed := time.Since(start)
-	log.Println("Found", len(tokens), "Tokens in", elapsed)
-	log.Println("Symbols:", tokens)
 	return b.ProducePrice(tokens, errorHandler)
 }
 
 func (b *BinanceExchange) ProducePrice(symbols []string, errorHandler ErrorHandler) *BinanceProducer {
-	outC := make(chan Price, 64)
+	outC := make(chan Price)
 	tradeEventHandler := func(event *binance.WsAggTradeEvent) {
 
 		price, err := strconv.ParseFloat(event.Price, 64)

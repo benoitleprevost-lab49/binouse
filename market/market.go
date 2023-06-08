@@ -19,6 +19,5 @@ type ErrorHandler func(x error)
 type PriceProducer interface {
 	Close()
 	Done() <-chan struct{}
-	// Ctx() context.Context
 	Out() <-chan Price
 }
