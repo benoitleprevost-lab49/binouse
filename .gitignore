@@ -21,3 +21,6 @@
 go.work
 binouse
 binouse.*
+
+
+.idea/

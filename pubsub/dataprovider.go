@@ -20,6 +20,7 @@ func NewPriceDispatcher(priceProducer market.PriceProducer) *PriceDispatcher {
 }
 
 func (p *PriceDispatcher) Subscribe(symbol string) <-chan market.Price {
+	// this is not thread safe, can be called simultaneously by SseServer
 	if _, ok := p.subscriptions[symbol]; !ok {
 		p.subscriptions[symbol] = make(chan market.Price)
 	}
@@ -27,6 +28,7 @@ func (p *PriceDispatcher) Subscribe(symbol string) <-chan market.Price {
 }
 
 func (p *PriceDispatcher) Unsubscribe(symbol string) bool {
+	// this is not thread safe, can be called simultaneously by SseServer
 	if ch, ok := p.subscriptions[symbol]; ok {
 		close(ch)
 		delete(p.subscriptions, symbol)
@@ -43,12 +45,14 @@ func (p *PriceDispatcher) process(ctx context.Context) {
 			err := ctx.Err()
 			log.Print(err)
 			return
-		case <-p.priceProducer.Done():
+		case <-p.priceProducer.Done(): // it's probably unnecessary, you should check when the "Out()" closed and quit there
 			log.Println("Price producer is done")
 			return
 		case price := <-p.priceProducer.Out():
+			// not thread safe check
 			if _, ok := p.subscriptions[price.Symbol]; ok {
 				log.Println("Found subscription ", price.Symbol, " for price ", price.Price)
+				// not thread safe and even can lead to a deadlock if the symbol channel removed between the check and the actual send
 				p.subscriptions[price.Symbol] <- price
 			} else {
 				log.Println("No subscription found for ", price.Symbol)

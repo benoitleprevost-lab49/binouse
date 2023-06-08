@@ -55,13 +55,16 @@ func (s *SseServer) Price(pattern string) {
 		w.Header().Set("Cache-Control", "no-cache")
 		w.Header().Set("Connection", "keep-alive")
 
-		flusher := w.(http.Flusher)
+		flusher := w.(http.Flusher) // if "w" is not a Flusher, it can panic
 		timeout := time.After(30 * time.Second)
 
 		symbol := r.URL.Query().Get("symbol")
 		if symbol != "" {
 			prices := s.priceDispatcher.Subscribe(symbol)
 			for {
+				// this can be an endless loop, you are not handling the case when another thread closing the same "prices" channel
+				// if another goroutine close the channel and this one is not timed out,
+				// then you will send the default value rapidly and maybe endlessly to the client in the "<-prices" case
 				select {
 				case <-timeout:
 					log.Println("Timeout")
@@ -83,5 +86,5 @@ func (s *SseServer) Price(pattern string) {
 
 func (s *SseServer) Start() {
 	log.Println("Starting server on port 8080 ...")
-	log.Fatal(http.ListenAndServe(":8080", s.mux))
+	log.Fatal(http.ListenAndServe(":8080", s.mux)) // you will log a fatal message even if it was closed correctly :)
 }
