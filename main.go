@@ -5,6 +5,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"time"
 
 	"github.com/benoitleprevost-lab49/binouse/market"
 	"github.com/benoitleprevost-lab49/binouse/pubsub"
@@ -15,40 +16,51 @@ const apiKey = "qF7DtXoU19fCrNpm7BWR4UbhAxpL37l5UvKQVpZbdZcaotf9CQMQNmhmQFgHXUwz
 const secretKey = "JjNzFYhVI8BZzrTNyqy0nOdBiGcmGks0IvAZ6K0QEzcsTydsKoQYkBpMIOcjwfKa"
 
 func main() {
+	// one signal channel to know it's been cancelled
+	sig := make(chan os.Signal, 1)
+	signal.Notify(sig, os.Interrupt)
+
+	// starting the server
 	log.Println("Starting server")
-	// global context for shutdown
-	ctx, cancel := context.WithCancel(context.Background())
 
 	// Get an exchange
 	exchange := market.NewBinanceExchange(apiKey, secretKey)
 
 	// Create a price producer
-	errorer := func(err error) {
-		// we could call cancel() maybe based on the error??
-		log.Fatalln(err)
+	producer, err := exchange.ProduceAllPrice()
+	if err != nil {
+		log.Fatal("error creating price producer: ", err)
 	}
-	producer := exchange.ProduceAllPrice(errorer)
 
 	// Create a price dispatcher
 	dispatcher := pubsub.NewPriceDispatcher(producer)
-	dispatcher.Start()
+	go func() {
+		dispatcher.Start(sig)
+	}()
 
-	// Create an SSE server
-
-	server := web.NewSseServer(dispatcher)
-	server.Dummy(ctx, "/dummy")
-	server.Price(ctx, "/price")
-
-	// shutdown
-	c := make(chan os.Signal, 1)
-	signal.Notify(c, os.Interrupt)
+	// Create an SSE sseserver
+	sseserver := web.NewSseServer(dispatcher)
+	sseserver.Dummy(sig, "/dummy")
+	sseserver.Price(sig, "/price")
 
 	go func() {
-		oscall := <-c
-		log.Printf("system call:%+v", oscall)
+		sseserver.Start()
+
+	}()
+
+	log.Println("Server started !!!")
+
+	oscall := <-sig
+	log.Printf("system call:%+v", oscall)
+	close(sig)
+
+	// shutdown
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second*5)
+	go func() {
+		sseserver.Shutdown(ctx)
 		cancel()
 	}()
 
-	server.Start(ctx)
-
+	<-ctx.Done()
+	log.Println("Terminated !!!")
 }

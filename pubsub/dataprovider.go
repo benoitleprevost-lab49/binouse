@@ -1,8 +1,8 @@
 package pubsub
 
 import (
-	"context"
 	"log"
+	"os"
 
 	"github.com/benoitleprevost-lab49/binouse/market"
 )
@@ -38,15 +38,14 @@ func (p *PriceDispatcher) Unsubscribe(symbol string) bool {
 	}
 }
 
-func (p *PriceDispatcher) process(ctx context.Context) {
+func (p *PriceDispatcher) Start(sig <-chan os.Signal) {
 	for {
 		select {
-		case <-ctx.Done():
-			err := ctx.Err()
-			log.Print(err)
+		case <-sig:
+			log.Println("Stoping dispatcher: the context is done")
 			return
 		case <-p.priceProducer.Done():
-			log.Println("Price producer is done")
+			log.Println("Stoping dispatcher: the price producer is done")
 			return
 		case price := <-p.priceProducer.Out():
 			if ch, ok := p.subscriptions[price.Symbol]; ok {
@@ -57,13 +56,4 @@ func (p *PriceDispatcher) process(ctx context.Context) {
 			}
 		}
 	}
-}
-
-func (p *PriceDispatcher) Start() (context.Context, context.CancelFunc) {
-	ctx := context.Background()
-	ctx, cancel := context.WithCancel(ctx)
-
-	go p.process(ctx)
-
-	return ctx, cancel
 }

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"time"
 
 	"github.com/benoitleprevost-lab49/binouse/pubsub"
@@ -15,13 +16,14 @@ import (
 type SseServer struct {
 	mux             *mux.Router
 	priceDispatcher *pubsub.PriceDispatcher
+	srv             *http.Server
 }
 
 func NewSseServer(priceDispatcher *pubsub.PriceDispatcher) *SseServer {
 	return &SseServer{mux: mux.NewRouter(), priceDispatcher: priceDispatcher}
 }
 
-func (s *SseServer) Dummy(ctx context.Context, pattern string) {
+func (s *SseServer) Dummy(done <-chan os.Signal, pattern string) {
 	log.Println("Registering dummer handler for pattern: ", pattern)
 	s.mux.HandleFunc(pattern, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
@@ -41,7 +43,7 @@ func (s *SseServer) Dummy(ctx context.Context, pattern string) {
 		id := 0
 		for {
 			select {
-			case <-ctx.Done():
+			case <-done:
 				log.Println("Context done")
 				return
 			case <-timeout:
@@ -57,7 +59,7 @@ func (s *SseServer) Dummy(ctx context.Context, pattern string) {
 	})
 }
 
-func (s *SseServer) Price(ctx context.Context, pattern string) {
+func (s *SseServer) Price(done <-chan os.Signal, pattern string) {
 	log.Println("Registering Price handler for pattern: ", pattern)
 	s.mux.HandleFunc(pattern, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
@@ -74,8 +76,8 @@ func (s *SseServer) Price(ctx context.Context, pattern string) {
 			prices := s.priceDispatcher.Subscribe(symbol)
 			for {
 				select {
-				case <-ctx.Done():
-					log.Println("Context done")
+				case <-done:
+					log.Println("Server interrupted !!!")
 					return
 				case <-timeout:
 					log.Println("Timeout")
@@ -99,11 +101,11 @@ func (s *SseServer) Price(ctx context.Context, pattern string) {
 	})
 }
 
-func (s *SseServer) Start(ctx context.Context) {
-	log.Println("Starting server on port 8080 ...")
+func (s *SseServer) Start() {
+	log.Println("Starting SSE server on port 8000 ...")
 	// start the server
 	srv := &http.Server{
-		Addr: "0.0.0.0:8080",
+		Addr: "0.0.0.0:8000",
 		// Good practice to set timeouts to avoid Slowloris attacks.
 		WriteTimeout: time.Second * 15,
 		ReadTimeout:  time.Second * 15,
@@ -111,26 +113,21 @@ func (s *SseServer) Start(ctx context.Context) {
 		Handler:      s.mux, // Pass our instance of gorilla/mux in.
 	}
 
-	go func() {
-		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Fatalf("listen: %s\n", err)
-		}
-	}()
-	log.Printf("server started")
+	s.srv = srv
 
-	<-ctx.Done()
+	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		log.Fatalf("listen: %s\n", err)
+	}
 
-	log.Printf("server stopped")
+	log.Println("SSE Server finished !")
+}
 
-	// gracefull shutdown sequence
-	ctxShutDown, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer func() {
-		cancel()
-	}()
+func (s *SseServer) Shutdown(ctx context.Context) {
+	log.Printf("SSE Shutdown initiated ...")
 
-	if err := srv.Shutdown(ctxShutDown); err != nil {
+	if err := s.srv.Shutdown(ctx); err != nil {
 		log.Fatalf("server Shutdown Failed:%+s", err)
 	}
 
-	log.Printf("server exited properly")
+	log.Printf("SSE Shutdown completed !!!")
 }
