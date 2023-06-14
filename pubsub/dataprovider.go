@@ -1,8 +1,8 @@
 package pubsub
 
 import (
-	"context"
 	"log"
+	"os"
 
 	"github.com/benoitleprevost-lab49/binouse/market"
 )
@@ -20,6 +20,7 @@ func NewPriceDispatcher(priceProducer market.PriceProducer) *PriceDispatcher {
 }
 
 func (p *PriceDispatcher) Subscribe(symbol string) <-chan market.Price {
+	//TODO: ADD a mutex here
 	if _, ok := p.subscriptions[symbol]; !ok {
 		p.subscriptions[symbol] = make(chan market.Price)
 	}
@@ -27,6 +28,7 @@ func (p *PriceDispatcher) Subscribe(symbol string) <-chan market.Price {
 }
 
 func (p *PriceDispatcher) Unsubscribe(symbol string) bool {
+	//TODO: ADD a mutex here
 	if ch, ok := p.subscriptions[symbol]; ok {
 		close(ch)
 		delete(p.subscriptions, symbol)
@@ -36,32 +38,22 @@ func (p *PriceDispatcher) Unsubscribe(symbol string) bool {
 	}
 }
 
-func (p *PriceDispatcher) process(ctx context.Context) {
+func (p *PriceDispatcher) Start(sig <-chan os.Signal) {
 	for {
 		select {
-		case <-ctx.Done():
-			err := ctx.Err()
-			log.Print(err)
+		case <-sig:
+			log.Println("Stoping dispatcher: the context is done")
 			return
 		case <-p.priceProducer.Done():
-			log.Println("Price producer is done")
+			log.Println("Stoping dispatcher: the price producer is done")
 			return
 		case price := <-p.priceProducer.Out():
-			if _, ok := p.subscriptions[price.Symbol]; ok {
+			if ch, ok := p.subscriptions[price.Symbol]; ok {
 				log.Println("Found subscription ", price.Symbol, " for price ", price.Price)
-				p.subscriptions[price.Symbol] <- price
+				ch <- price
 			} else {
 				log.Println("No subscription found for ", price.Symbol)
 			}
 		}
 	}
-}
-
-func (p *PriceDispatcher) Start() (context.Context, context.CancelFunc) {
-	ctx := context.Background()
-	ctx, cancel := context.WithCancel(ctx)
-
-	go p.process(ctx)
-
-	return ctx, cancel
 }

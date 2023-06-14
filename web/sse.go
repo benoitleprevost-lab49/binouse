@@ -1,25 +1,29 @@
 package web
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"time"
 
 	"github.com/benoitleprevost-lab49/binouse/pubsub"
+	"github.com/gorilla/mux"
 )
 
 type SseServer struct {
-	mux             *http.ServeMux
+	mux             *mux.Router
 	priceDispatcher *pubsub.PriceDispatcher
+	srv             *http.Server
 }
 
 func NewSseServer(priceDispatcher *pubsub.PriceDispatcher) *SseServer {
-	return &SseServer{mux: http.NewServeMux(), priceDispatcher: priceDispatcher}
+	return &SseServer{mux: mux.NewRouter(), priceDispatcher: priceDispatcher}
 }
 
-func (s *SseServer) Dummy(pattern string) {
+func (s *SseServer) Dummy(done <-chan os.Signal, pattern string) {
 	log.Println("Registering dummer handler for pattern: ", pattern)
 	s.mux.HandleFunc(pattern, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
@@ -28,11 +32,20 @@ func (s *SseServer) Dummy(pattern string) {
 		w.Header().Set("Cache-Control", "no-cache")
 		w.Header().Set("Connection", "keep-alive")
 
-		flusher := w.(http.Flusher)
+		flusher, ok := w.(http.Flusher)
+		if !ok {
+			log.Fatalln("Streaming unsupported!")
+			http.Error(w, "Streaming unsupported!", http.StatusInternalServerError)
+			return
+		}
+
 		timeout := time.After(30 * time.Second)
 		id := 0
 		for {
 			select {
+			case <-done:
+				log.Println("Context done")
+				return
 			case <-timeout:
 				return
 			default:
@@ -46,7 +59,7 @@ func (s *SseServer) Dummy(pattern string) {
 	})
 }
 
-func (s *SseServer) Price(pattern string) {
+func (s *SseServer) Price(done <-chan os.Signal, pattern string) {
 	log.Println("Registering Price handler for pattern: ", pattern)
 	s.mux.HandleFunc(pattern, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
@@ -63,8 +76,15 @@ func (s *SseServer) Price(pattern string) {
 			prices := s.priceDispatcher.Subscribe(symbol)
 			for {
 				select {
+				case <-done:
+					log.Println("Server interrupted !!!")
+					return
 				case <-timeout:
 					log.Println("Timeout")
+					s.priceDispatcher.Unsubscribe(symbol)
+					return
+				case <-r.Context().Done():
+					log.Println("Context done")
 					s.priceDispatcher.Unsubscribe(symbol)
 					return
 				case price := <-prices:
@@ -82,6 +102,32 @@ func (s *SseServer) Price(pattern string) {
 }
 
 func (s *SseServer) Start() {
-	log.Println("Starting server on port 8080 ...")
-	log.Fatal(http.ListenAndServe(":8080", s.mux))
+	log.Println("Starting SSE server on port 8000 ...")
+	// start the server
+	srv := &http.Server{
+		Addr: "0.0.0.0:8000",
+		// Good practice to set timeouts to avoid Slowloris attacks.
+		WriteTimeout: time.Second * 15,
+		ReadTimeout:  time.Second * 15,
+		IdleTimeout:  time.Second * 60,
+		Handler:      s.mux, // Pass our instance of gorilla/mux in.
+	}
+
+	s.srv = srv
+
+	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		log.Fatalf("listen: %s\n", err)
+	}
+
+	log.Println("SSE Server finished !")
+}
+
+func (s *SseServer) Shutdown(ctx context.Context) {
+	log.Printf("SSE Shutdown initiated ...")
+
+	if err := s.srv.Shutdown(ctx); err != nil {
+		log.Fatalf("server Shutdown Failed:%+s", err)
+	}
+
+	log.Printf("SSE Shutdown completed !!!")
 }

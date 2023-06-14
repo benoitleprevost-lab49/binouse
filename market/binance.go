@@ -12,47 +12,57 @@ import (
 type BinanceExchange struct {
 	apiKey    string
 	secretKey string
+	client    *binance.Client
 }
 
 func NewBinanceExchange(apiKey, secretKey string) *BinanceExchange {
-	return &BinanceExchange{apiKey: apiKey, secretKey: secretKey}
+	client := binance.NewClient(apiKey, secretKey)
+	return &BinanceExchange{apiKey: apiKey, secretKey: secretKey, client: client}
 }
 
 func (b *BinanceExchange) Symbols() ([]string, error) {
-	client := binance.NewClient(b.apiKey, b.secretKey)
-	ei, err := client.NewExchangeInfoService().Do(context.Background())
+	start := time.Now()
+
+	ei, err := b.client.NewExchangeInfoService().Do(context.Background())
 	if err != nil {
 		return nil, err
 	}
-	symbols := make([]string, 0)
+	symbols := make([]string, 0, len(ei.Symbols)) // we don't know yet how many symbols we will be tradeable
 	for _, s := range ei.Symbols {
 		if s.IsMarginTradingAllowed && s.IsSpotTradingAllowed {
 			symbols = append(symbols, s.Symbol)
 		}
-
 	}
+
+	elapsed := time.Since(start)
+
+	log.Println("Found", len(symbols), "Tokens in", elapsed)
+	log.Println("Symbols:", symbols)
+
 	return symbols, nil
 }
 
-func (b *BinanceExchange) ProduceAllPrice(errorHandler ErrorHandler) *BinanceProducer {
-	start := time.Now()
+func (b *BinanceExchange) ProduceAllPrice() (*BinanceProducer, error) {
 	tokens, err := b.Symbols()
 	if err != nil {
-		errorHandler(err)
+		return nil, err
 	}
-	elapsed := time.Since(start)
-	log.Println("Found", len(tokens), "Tokens in", elapsed)
-	log.Println("Symbols:", tokens)
-	return b.ProducePrice(tokens, errorHandler)
+
+	producer, err := b.ProducePrice(tokens)
+	if err != nil {
+		return nil, err
+	}
+	return producer, nil
 }
 
-func (b *BinanceExchange) ProducePrice(symbols []string, errorHandler ErrorHandler) *BinanceProducer {
-	outC := make(chan Price, 64)
-	tradeEventHandler := func(event *binance.WsAggTradeEvent) {
+func (b *BinanceExchange) ProducePrice(symbols []string) (*BinanceProducer, error) {
+	outC := make(chan Price)
 
+	tradeEventHandler := func(event *binance.WsAggTradeEvent) {
 		price, err := strconv.ParseFloat(event.Price, 64)
 		if err != nil {
-			errorHandler(err)
+			log.Fatalln("Error parsing price:", err)
+			return
 		}
 		// log.Println("Receveived AggTradeEvent:", event.Symbol)
 		outC <- Price{
@@ -63,19 +73,19 @@ func (b *BinanceExchange) ProducePrice(symbols []string, errorHandler ErrorHandl
 	}
 
 	binErroHandler := func(err error) {
-		errorHandler(err)
+		log.Fatalln("Error:", err)
 	}
 
 	doneC, stopC, err := binance.WsCombinedAggTradeServe(symbols, tradeEventHandler, binErroHandler)
 	if err != nil {
-		errorHandler(err)
+		return nil, err
 	}
 
 	return &BinanceProducer{
 		doneC: doneC,
 		stopC: stopC,
 		outC:  outC,
-	}
+	}, nil
 }
 
 type BinanceProducer struct {
@@ -83,6 +93,8 @@ type BinanceProducer struct {
 	stopC chan struct{}
 	outC  chan Price
 }
+
+// This getters are there to implement the PriceProducer interface
 
 func (b *BinanceProducer) Close() {
 	b.stopC <- struct{}{}
